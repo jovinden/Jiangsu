@@ -3,17 +3,124 @@ title: "R Notebook"
 output: html_notebook
 ---
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
-
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
-
+# Set up
 ```{r}
-plot(cars)
+library(tidyverse)
+library(ComplexHeatmap)
+
+rm(list=ls())
 ```
 
-Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
 
-When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+# Upload Data
+```{r}
+metadata = read_csv("https://raw.githubusercontent.com/jovinden/Jiangsu/refs/heads/main/data/metadata_jiangsu_vinden.csv")
+# neg = TRUE if row represents a naive control sample
+# id = unique participant id
+# barcode = unique sample id (there are some cases of multiple samples from same id)
+# sex
+# age
+# country = country where participant traveled and acquired malaria infection 
+# country_cat = if country is in the top 5 most common countries, == country. else "other"
+# date_abroad = date participant left china to go work abroad
+# date_return = date participant returned to China 
+# date_symp = date of symptom onset
+# date_dx = date of malaria diagnosis
+# date_sample = date of blood sample aquisition 
+# tsi = time since infection (days between date_sample and date_return)
 
-The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+abdata = read_csv("https://raw.githubusercontent.com/jovinden/Jiangsu/refs/heads/main/data/abdata_jiangsu_vinden.csv")
+# barcode = unique sample id
+# ag = antigen on the luminex panel
+# MFI = mean fluorescent intensity readout from luminex 
+
+df = metadata %>% left_join(abdata) %>% filter(neg==FALSE)
+```
+
+
+# Table 1
+```{r}
+# number of participants 
+n_participant = nrow(df %>% select(id) %>% distinct())
+
+# number of samples 
+n_sample = nrow(df %>% select(barcode) %>% distinct())
+
+# number female
+n_female = nrow(df %>% select(id, sex) %>% distinct() %>% filter(sex == "Female"))
+
+# age dist 
+summary(df %>% select(id, age) %>% distinct())
+
+# time spent abroad 
+ta = df %>% select(id, date_abroad, date_return) %>% distinct() %>% 
+  mutate(days_abroad = as.numeric(date_return - date_abroad)) %>% 
+  filter(!is.na(days_abroad))
+summary(ta$days_abroad)
+
+# tsi
+summary(df %>% select(id, tsi) %>% distinct())
+
+# country
+summary(df %>% select(id, country_cat) %>% distinct())
+
+```
+
+# Figure 1a Heatmap
+
+```{r}
+# order the ags from most reactive to least reactive with tt at the bottom
+orderag = df %>% 
+  select(barcode, ag, MFI, neg, tsi) %>% 
+  group_by(ag) %>% 
+  summarise(med_MFI = median(MFI)) %>% 
+  mutate(med_MFI = ifelse(ag=="Tetanus.toxoid", 0, med_MFI),
+         rnk = rank(desc(med_MFI)))
+
+# generate a dataframe to feed to heatmap function
+hdf = df %>% 
+  select(barcode, ag, MFI, tsi) %>% 
+  mutate(logMFI = log(MFI)) %>% 
+  arrange(tsi) %>% 
+  select(-tsi, -MFI) %>% 
+  pivot_wider(names_from = "barcode", values_from = "logMFI") %>% 
+  left_join(orderag %>% select(ag, rnk)) %>% 
+  mutate(ag = fct_reorder(ag, rnk)) %>% 
+  arrange(ag) %>% 
+  select(-rnk) %>% 
+  column_to_rownames("ag")
+
+# exposure status matrix for annotating heatmap
+exp_ma = df %>% 
+  select(barcode, tsi, neg) %>% distinct() %>% 
+  mutate(tsicat = ifelse(is.na(tsi), "Naive control", 
+                         ifelse(tsi<=90, "0-3 months",
+                          ifelse(tsi>90&tsi<=180, "3-6 months", 
+                                ifelse(tsi>180&tsi<=365, "6-12 months", 
+                                       ifelse(tsi>365&tsi<=730, "1-2 years",
+                                              ifelse(tsi>730, "2+ years", "wurt"))))))) %>% 
+  arrange(tsi)
+
+# generate annotation object
+tsicat = HeatmapAnnotation(TSI = as.matrix(exp_ma$tsicat),
+                           col = list(TSI = c("0-3 months" ="#f0f9e8",
+                                   "3-6 months" = "#bae4bc", 
+                                  "6-12 months" = "#7bccc4", 
+                                   "1-2 years" = "#43a2ca",
+                                   "2+ years"  = "#0868ac", 
+                                   "Naive control" =  "#969696")),
+                           annotation_legend_param = list(TSI = list(nrow = 1)))
+
+# assemble heatmap
+a = Heatmap(as.matrix(hdf), cluster_rows = FALSE, cluster_columns = FALSE, top_annotation = c(tsicat),
+        show_column_names = FALSE,
+        name = "log(MFI)",
+        heatmap_legend_param = list(direction = "horizontal"))
+
+# draw heatmap
+draw(a, merge_legend = TRUE, heatmap_legend_side = "bottom", 
+    annotation_legend_side = "bottom")
+
+
+```
 
