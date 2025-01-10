@@ -1,0 +1,24 @@
+Organism,Antigen,Description,Gene ID,Location,Marker,Reference
+P.falciparum,PfAMA1,Apical membrane antigen 1,PF3D7_1133400,Merozoite surface,Historical exposure,Collins CR et al; PMID: 17192270
+P.falciparum,PfMSP1_19,Merozoite surface protein 1-19,PF3D7_0930300,Merozoite surface,Historical exposure,Burghaus PA and Holder AA; PMID: 8078519
+P.falciparum,GLURP R2,Glutamate-rich protein,PF3D7_1035300,All stages,Historical exposure,Theisen M et al; PMID: 7719909
+P.falciparum,MSP2 CH150/9,Merozoite surface protein 2 full-length [CH150/9],PF3D7_0206800,Merozoite surface,Historical exposure,Polley SD et al; PMID: 16111789
+P.falciparum,MSP2 Dd2,Merozoite surface protein 2 full-length [Dd2],PF3D7_0206800,Merozoite surface,Historical exposure,Polley SD et al; PMID: 16111789
+P.falciparum,Etramp 4 Ag 2,Early transcribed membrane protein 4 antigen (exon) 2,PF3D7_0423700,iRBC surface/PVM,Recent exposure,"Spielmann et al, PMID: 12686607; Tetteh K unpublished"
+P.falciparum,Etramp 5 Ag 1,Early transcribed membrane protein 5 antigen (exon) 1,PF3D7_0532100,iRBC surface/PVM,Recent exposure,"Spielmann et al, PMID: 12686607; Tetteh K unpublished"
+P.falciparum,GEXP18,Plasmodium exported protein,PF3D7_0402400,Gametocyte surface,Recent exposure,"Helb et al., PMID 26216993"
+P.falciparum,HSP40 Ag 1,"Heat shock protein 40, type II",PF3D7_0501100.1,iRBC/gametocyte,Recent exposure,"Helb et al., PMID 26216993"
+P.falciparum,Hyp 2,Plasmodium exported protein (hyp2),PF3D7_1002000,iRBC/PVM,Recent exposure,"Helb et al., PMID 26216993"
+P.falciparum,SBP1,Skeleton-binding protein 1,PF3D7_0501300,iRBC,Recent exposure,"Gruring et al, PMID: 21266965; Tetteh K unpublished"
+P.falciparum,PfSEA-1,Schizont egress antigen-1,PF3D7_1021800,iRBC,Recent exposure/protection,"Raj DK et al, PMID: 24855263; Tetteh K unpublished"
+P.falciparum,Rh2_2030,Reticulocyte binding protein 2 homologue a,PF3D7_1335400,Merozoite rhoptry,Protection,Triglia T et al; PMID: 11160005
+P.falciparum,Rh4.2,Reticulocyte binding protein homologue 4 (RH4),PF3D7_0424200,Merozoite rhoptry,Protection,Reiling et al; PMID: 23028883
+P.falciparum,Rh5.1,Reticulocyte binding protein homologue 5,PF3D7_0424100,Merozoite rhoptry,Protection,"Crosnier et al, PMID: 22080952;Tetteh K unpublished Ragotte et al., 2020 PMID  32359873"
+P.falciparum,EBA140 RIII-V,Erythrocyte binding antigen-140,PF3D7_1301600,Merozoite microneme,Protection,Richards et al; PMID: 20843207
+P.falciparum,EBA175 RIII-V,Erythrocyte binding antigen-175,PF3D7_0731500,Merozoite microneme,Protection,Richards et al; PMID: 20843207
+P.falciparum,EBA181 RIII-V,Erythrocyte binding antigen-181,PF3D7_0102500,Merozoite microneme,Protection,Richards et al; PMID: 20843207
+P.falciparum,CSP,Circumsporozoite protein,PF3D7_0304600,Sporozoite surface,"RTS,S/R21 vaccination  liver stage exposure/protection","Kastenmuller et al, PMID: 23275094"
+An.gambiae s.l.,gSG6,Anopheles gambiae salivary gland protein 6,gi:13537666,An.gambiae s.l salivary gland,An.gambiae s.l. exposure,"Stone et al., PMID: 22768250: Rizzo et al 2011, PMID: 21437289"
+Clostridum tetani,Tetanus toxoid,Tetanus toxoid (NIBSC 02/232),NA,NA (tetanus vaccine),NA (reactivity control),NA
+NA,NA,NA,NA,NA,NA,NA
+"iRBC, infected red blood cell; PVM, parasitophorous vacuole membrane",NA,NA,NA,NA,NA,NA
