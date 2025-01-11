@@ -42,12 +42,14 @@ df = metadata %>% left_join(abdata) %>% filter(neg==FALSE)
 ```{r}
 # number of participants 
 n_participant = nrow(df %>% select(id) %>% distinct())
+n_participant
 
 # number of samples 
 n_sample = nrow(df %>% select(barcode) %>% distinct())
-
+n_sample
 # number female
 n_female = nrow(df %>% select(id, sex) %>% distinct() %>% filter(sex == "Female"))
+n_female
 
 # age dist 
 summary(df %>% select(id, age) %>% distinct())
@@ -62,9 +64,25 @@ summary(ta$days_abroad)
 summary(df %>% select(id, tsi) %>% distinct())
 
 # country
-summary(df %>% select(id, country_cat) %>% distinct())
+co = df %>% select(id, country) %>% distinct() %>% 
+  group_by(country) %>% 
+  summarise(n=n()) %>% 
+  ungroup() %>% 
+  mutate(rnk = rank(desc(n), ties.method = "first")) %>% 
+  mutate(country_cat = as.factor(ifelse(rnk<6, country, "Other"))) %>% 
+  select(country, country_cat) %>% 
+  right_join(df %>% select(id, country) %>% distinct())
+
+summary(co %>% select(id, country_cat) %>% distinct())
 
 ```
+
+# Table S1
+```{r}
+# country
+summary(df %>% select(id, country) %>% distinct())
+```
+
 
 # Figure 1a Heatmap
 
