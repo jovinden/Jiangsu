@@ -34,44 +34,51 @@ abdata = read_csv("https://raw.githubusercontent.com/jovinden/Jiangsu/refs/heads
 # ag = antigen on the luminex panel
 # MFI = mean fluorescent intensity readout from luminex 
 
-df = metadata %>% left_join(abdata) %>% filter(neg==FALSE)
+df = metadata %>% left_join(abdata) %>% 
+  filter(!is.na(MFI)) %>% #data not generated for JS040 
+  mutate(country_cat = factor(country_cat, levels = c("Angola", "Nigeria", "Equatorial Guinea", 
+                                                      "Republic of Congo", "Guinea", "Other")))
+
+df_noneg = df %>% filter(neg==FALSE)
 ```
 
 
 # Table 1
 ```{r}
 # number of participants 
-n_participant = nrow(df %>% select(id) %>% distinct())
+n_participant = nrow(df_noneg %>% select(id) %>% distinct())
 n_participant
 
 # number of samples 
-n_sample = nrow(df %>% select(barcode) %>% distinct())
+n_sample = nrow(df_noneg %>% select(barcode) %>% distinct())
 n_sample
 # number female
-n_female = nrow(df %>% select(id, sex) %>% distinct() %>% filter(sex == "Female"))
+n_female = nrow(df_noneg %>% select(id, sex) %>% distinct() %>% filter(sex == "Female"))
 n_female
 
 # age dist 
-summary(df %>% select(id, age) %>% distinct())
+summary(df_noneg %>% select(id, age) %>% distinct())
 
 # time spent abroad 
-ta = df %>% select(id, date_abroad, date_return) %>% distinct() %>% 
+ta = df_noneg %>% select(id, date_abroad, date_return) %>% distinct() %>% 
   mutate(days_abroad = as.numeric(date_return - date_abroad)) %>% 
   filter(!is.na(days_abroad))
 summary(ta$days_abroad)
 
 # tsi
-summary(df %>% select(id, tsi) %>% distinct())
+summary(df_noneg %>% select(id, tsi) %>% distinct())
 
 # country
-co = df %>% select(id, country) %>% distinct() %>% 
+
+## Not enough space to list every country. List top 5 and group the rest into "other" 
+co = df_noneg %>% select(id, country) %>% distinct() %>% 
   group_by(country) %>% 
   summarise(n=n()) %>% 
   ungroup() %>% 
   mutate(rnk = rank(desc(n), ties.method = "first")) %>% 
   mutate(country_cat = as.factor(ifelse(rnk<6, country, "Other"))) %>% 
   select(country, country_cat) %>% 
-  right_join(df %>% select(id, country) %>% distinct())
+  right_join(df_noneg %>% select(id, country) %>% distinct())
 
 summary(co %>% select(id, country_cat) %>% distinct())
 
@@ -80,7 +87,8 @@ summary(co %>% select(id, country_cat) %>% distinct())
 # Table S1
 ```{r}
 # country
-summary(df %>% select(id, country) %>% distinct())
+summary(df_noneg %>% select(id, country) %>% distinct() %>% 
+          mutate(country = as.factor(country)))
 ```
 
 
@@ -92,7 +100,7 @@ orderag = df %>%
   select(barcode, ag, MFI, neg, tsi) %>% 
   group_by(ag) %>% 
   summarise(med_MFI = median(MFI)) %>% 
-  mutate(med_MFI = ifelse(ag=="Tetanus.toxoid", 0, med_MFI),
+  mutate(med_MFI = ifelse(ag=="Tetanus_toxoid", 0, med_MFI),
          rnk = rank(desc(med_MFI)))
 
 # generate a dataframe to feed to heatmap function
@@ -140,5 +148,25 @@ draw(a, merge_legend = TRUE, heatmap_legend_side = "bottom",
     annotation_legend_side = "bottom")
 
 
+```
+# Figure 2a
+
+```{r}
+# calculate mean MFI of naive samoples 
+
+mn = df %>% filter(neg==1) %>% 
+  group_by(ag) %>%        
+  summarise(mean_naive = mean(MFI),
+            sd_naive = sd(MFI))
+
+ggplot()+
+  theme_bw()+
+  geom_point(data = df_noneg, aes(x=log(as.numeric(tsi)), y=log(MFI), col=country_cat), size=1)+
+  scale_x_continuous(breaks = c(log(14), log(90), log(180), log(365), log(730)), labels=c(14, 90, 180, 365, 730))+
+  geom_hline(data=mn, aes(yintercept = log(mean_naive)))+
+  facet_wrap(~ag)+
+  scale_color_brewer(palette = "Set2")+
+  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1, size=6))+
+  labs(x="Time Since Infection (days)")
 ```
 
