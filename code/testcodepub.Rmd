@@ -152,8 +152,7 @@ draw(a, merge_legend = TRUE, heatmap_legend_side = "bottom",
 # Figure 2a
 
 ```{r}
-# calculate mean MFI of naive samoples 
-
+# calculate mean MFI of naive samples 
 mn = df %>% filter(neg==1) %>% 
   group_by(ag) %>%        
   summarise(mean_naive = mean(MFI),
