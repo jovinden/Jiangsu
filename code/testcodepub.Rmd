@@ -7,6 +7,7 @@ output: html_notebook
 ```{r}
 library(tidyverse)
 library(ComplexHeatmap)
+library(ggbeeswarm)
 
 rm(list=ls())
 ```
@@ -36,6 +37,7 @@ abdata = read_csv("https://raw.githubusercontent.com/jovinden/Jiangsu/refs/heads
 
 df = metadata %>% left_join(abdata) %>% 
   filter(!is.na(MFI)) %>% #data not generated for JS040 
+  # generate useful variables
   mutate(country_cat = factor(country_cat, levels = c("Angola", "Nigeria", "Equatorial Guinea", 
                                                       "Republic of Congo", "Guinea", "Other")))
 
@@ -138,13 +140,13 @@ tsicat = HeatmapAnnotation(TSI = as.matrix(exp_ma$tsicat),
                            annotation_legend_param = list(TSI = list(nrow = 1)))
 
 # assemble heatmap
-a = Heatmap(as.matrix(hdf), cluster_rows = FALSE, cluster_columns = FALSE, top_annotation = c(tsicat),
+assemble = Heatmap(as.matrix(hdf), cluster_rows = FALSE, cluster_columns = FALSE, top_annotation = c(tsicat),
         show_column_names = FALSE,
         name = "log(MFI)",
         heatmap_legend_param = list(direction = "horizontal"))
 
 # draw heatmap
-draw(a, merge_legend = TRUE, heatmap_legend_side = "bottom", 
+draw(assemble, merge_legend = TRUE, heatmap_legend_side = "bottom", 
     annotation_legend_side = "bottom")
 
 
@@ -159,13 +161,53 @@ mn = df %>% filter(neg==1) %>%
             sd_naive = sd(MFI))
 
 ggplot()+
-  theme_bw()+
+  theme_test()+
   geom_point(data = df_noneg, aes(x=log(as.numeric(tsi)), y=log(MFI), col=country_cat), size=1)+
   scale_x_continuous(breaks = c(log(14), log(90), log(180), log(365), log(730)), labels=c(14, 90, 180, 365, 730))+
   geom_hline(data=mn, aes(yintercept = log(mean_naive)))+
   facet_wrap(~ag)+
   scale_color_brewer(palette = "Set2")+
-  theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1, size=6))+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1, size=6))+
+  labs(x="Time Since Infection (days)")
+```
+# Figure 2b
+
+breadth vs tsi 
+
+```{r}
+
+breadth = df %>% filter(neg==1) %>% 
+  # find the mean value of the responses from naive individuals 
+  group_by(ag) %>% 
+  filter(!is.na(MFI)) %>% 
+  summarise(mean_naive = mean(MFI),
+            sd_naive = sd(MFI)) %>% 
+  # set cutoff for whether a given antibody response is "positive" 
+  mutate(poscutoff = mean_naive + 2*sd_naive) %>% 
+  right_join(df) %>% 
+  ungroup() %>% 
+  # categorize all responses as positive or negative
+  mutate(seropos = ifelse(MFI>poscutoff, 1, 0)) %>% 
+  # calculate breadth
+  group_by(barcode, neg, tsi, tsicat) %>% 
+  summarise(breadth = sum(seropos)) %>% 
+  # create groups for plotting
+  mutate(label = ifelse(neg==TRUE, "Naive control", tsicat))
+
+ggplot(data=breadth)+
+  stat_summary(aes(x = label, y = breadth),
+               fun.min = function(z) { quantile(z,0.25) },
+               fun.max = function(z) { quantile(z,0.75) },
+               fun = median,
+               geom="errorbar",
+               width=0.5)+
+  stat_summary(aes(x = label, y = breadth),
+               fun = median,
+               geom="crossbar",
+               width=0.5)+
+  
+  theme_bw()+
+  geom_beeswarm(aes(x=label, y=breadth), col="lightseagreen")+
   labs(x="Time Since Infection (days)")
 ```
 
