@@ -34,13 +34,43 @@ abdata = read_csv("https://raw.githubusercontent.com/jovinden/Jiangsu/refs/heads
 # ag = antigen on the luminex panel
 # MFI = mean fluorescent intensity readout from luminex 
 
-df = metadata %>% left_join(abdata) %>% 
-  filter(!is.na(MFI)) %>% #data not generated for JS040 
-  mutate(country_cat = factor(country_cat, levels = c("Angola", "Nigeria", "Equatorial Guinea", 
-                                                      "Republic of Congo", "Guinea", "Other")))
 
+
+```
+
+Add or calculate useful variables
+```{r}
+df = metadata %>%  
+  # add useful variables
+  #country_cat to simplify countries of travel (too many to plot at once)
+  select(id, country) %>% distinct() %>% 
+  group_by(country) %>% 
+  summarise(n=n()) %>% 
+  ungroup() %>% 
+  mutate(rnk = rank(desc(n), ties.method = "first")) %>% 
+  mutate(country_cat = as.factor(ifelse(rnk<6, country, "Other"))) %>% 
+  select(country, country_cat) %>% 
+  right_join(metadata) %>% 
+  mutate(country_cat = factor(country_cat, levels = c("Angola", "Nigeria", "Equatorial Guinea", 
+                                                      "Republic of Congo", "Guinea", "Other"))) %>% 
+  left_join(abdata) %>% 
+  filter(!is.na(MFI)) %>% #data not generated for JS040 
+  # tsi = time since infection in days
+  mutate(tsi = date_sample - date_dx) %>% 
+  # tsicat = a categorical variable for tsi
+  mutate(tsicat = ifelse(tsi<=90, "[0,90]", 
+                         ifelse(tsi>90 & tsi<=180, "(90,180]", 
+                                ifelse(tsi>180 & tsi<= 365, "(180, 365]",
+                                       ifelse(tsi>365 & tsi <=730, "(365,730]", 
+                                              ifelse(tsi>730, "(730,2027]", "bad")))))) %>% 
+  mutate(tsicat = ifelse(neg==1, "Naive", tsicat)) %>% 
+  mutate(tsicat = factor(tsicat, 
+                         levels = c("[0,90]",  "(90,180]","(180, 365]", "(365,730]", "(730,2027]", "Naive" )))
+
+# some plots will not need the naive controls. make a df without them for easy reference
 df_noneg = df %>% filter(neg==FALSE)
 ```
+
 
 
 # Table 1
@@ -149,8 +179,9 @@ draw(a, merge_legend = TRUE, heatmap_legend_side = "bottom",
 
 
 ```
-# Figure 2a
 
+
+# Figure 2a
 ```{r}
 # calculate mean MFI of naive samples 
 mn = df %>% filter(neg==1) %>% 
