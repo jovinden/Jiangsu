@@ -7,6 +7,12 @@ output: html_notebook
 ```{r}
 library(tidyverse)
 library(ComplexHeatmap)
+library(ggbeeswarm)
+library(randomForest)
+library(cvAUC)
+library(ROCR)
+
+set.seed(316)
 
 rm(list=ls())
 ```
@@ -41,7 +47,6 @@ abdata = read_csv("https://raw.githubusercontent.com/jovinden/Jiangsu/refs/heads
 Add or calculate useful variables
 ```{r}
 df = metadata %>%  
-  # add useful variables
   #country_cat to simplify countries of travel (too many to plot at once)
   select(id, country) %>% distinct() %>% 
   group_by(country) %>% 
@@ -99,17 +104,6 @@ summary(ta$days_abroad)
 summary(df_noneg %>% select(id, tsi) %>% distinct())
 
 # country
-
-## Not enough space to list every country. List top 5 and group the rest into "other" 
-co = df_noneg %>% select(id, country) %>% distinct() %>% 
-  group_by(country) %>% 
-  summarise(n=n()) %>% 
-  ungroup() %>% 
-  mutate(rnk = rank(desc(n), ties.method = "first")) %>% 
-  mutate(country_cat = as.factor(ifelse(rnk<6, country, "Other"))) %>% 
-  select(country, country_cat) %>% 
-  right_join(df_noneg %>% select(id, country) %>% distinct())
-
 summary(co %>% select(id, country_cat) %>% distinct())
 
 ```
@@ -192,12 +186,166 @@ mn = df %>% filter(neg==1) %>%
 ggplot()+
   theme_bw()+
   geom_point(data = df_noneg, aes(x=log(as.numeric(tsi)), y=log(MFI), col=country_cat), size=1)+
-  scale_x_continuous(breaks = c(log(14), log(90), log(180), log(365), log(730)), labels=c(14, 90, 180, 365, 730))+
+  scale_x_continuous(breaks = c(log(14), log(90), log(180), log(365), log(730)), 
+                     labels=c(14, 90, 180, 365, 730))+
   geom_hline(data=mn, aes(yintercept = log(mean_naive)))+
   facet_wrap(~ag)+
   scale_color_brewer(palette = "Set2")+
   theme(axis.text.x = element_text(angle = 90, vjust = 1, hjust=1, size=6))+
   labs(x="Time Since Infection (days)",
        col = "Country of Travel")
+```
+# Figure 2b breadth vs TSI
+```{r}
+# calculate breadth of each sample
+breadth = df_noneg %>% 
+  left_join(mn) %>% 
+  # define seropositive if MFI > than 3sd above mean of Naive controls
+  mutate(seropos = ifelse(MFI > mean_naive + 3*sd_naive, 1, 0)) %>% 
+  filter(ag!="Tetanus_toxoid") %>% 
+  group_by(barcode, tsicat) %>% 
+  summarise(breadth = sum(seropos)) 
+
+ggplot(data=breadth)+
+  stat_summary(aes(x = tsicat, y = breadth),
+               fun.min = function(z) { quantile(z,0.25) },
+               fun.max = function(z) { quantile(z,0.75) },
+               fun = median,
+               geom="crossbar",
+               width=0.5)+
+  
+  theme_test()+
+  geom_beeswarm(aes(x=tsicat, y=breadth), col="lightseagreen")+
+  labs(x="Time Since Infection (days)")
+```
+Figure 2c mean MFI vs tsi
+```{r}
+meanMFI = df %>% 
+  filter(ag!="Tetanus_toxoid") %>% 
+  group_by(barcode, tsicat) %>% 
+  summarise(mean_MFI = mean(MFI))
+
+ggplot(data=meanMFI)+
+  stat_summary(aes(x = tsicat, y = mean_MFI),
+               fun.min = function(z) { quantile(z,0.25) },
+               fun.max = function(z) { quantile(z,0.75) },
+               fun = median,
+               geom="crossbar",
+               width=0.5)+
+  theme_test()+
+  geom_beeswarm(aes(x=tsicat, y=mean_MFI), col="#fc8d62")+
+  labs(x="Time Since Infection (days)",
+       y = "mean MFI of sample")
+```
+# Figure 3 ROC single ag cutoffs
+
+First, set up some functions for running cross-validated random forests. 
+
+## cvFolds
+```{r}
+# splits data into V folds, balanced by outcome. 
+cvFolds = function(Y, V){ #Y = outcome, #V = number of folds
+  Y0 = split(sample(which(Y==FALSE)), rep(1:V, length = length(which(Y==FALSE))))
+  Y1 = split(sample(which(Y==TRUE)), rep(1:V, length = length(which(Y==TRUE))))
+  folds = vector("list", length=V)
+  for (v in seq(V)) {folds[[v]] = c(Y0[[v]], Y1[[v]])}
+  return(folds)
+}
+```
+
+## doFit
+```{r}
+# Train random forest model to V-1 folds, predict on remaining fold. 
+doFit <- function(v, folds, data){ 
+  
+  fit <- randomForest(as.factor(outcome)~., data = data[-folds[[v]],], type="prob")
+  
+  pred <- predict(fit, newdata = data[folds[[v]],], type = "prob")
+  return(pred[,2])
+}
+```
+
+## xval_rf_fxn
+```{r}
+
+xval_rf_fxn = function(fdf, V=5, out = 180){
+  # fdf = function data frame. Requires barcode, ag, MFI, tsi. 
+  # V = # of folds for x-validation
+  # out = cutoff for the outcome variable in days (predicting exposure in the past x days, x = out) 
+  
+  # generate a df that is properly formatted for feeding to rf 
+  rdf = fdf %>% 
+    # generate binary outcome variable - was individual exposed in previous (out) days?
+    mutate(outcome = ifelse(tsi<=out, TRUE, FALSE)) %>% 
+    select(barcode, ag, MFI, outcome) %>% distinct() %>% # select predictor and outcome variables
+    filter(!is.na(outcome)) %>% 
+    pivot_wider(names_from = ag, values_from = MFI) %>% # format so each ag is a separate predictor var
+    select(-barcode) # I only remove barcode at the very last step so that i can check ordering easily
+  
+  # use cvFolds to generate folds
+  folds = cvFolds(Y = rdf$outcome, V = V) # create V folds
+  
+  # run dofit on all the folds
+  predictions <- unlist(sapply(seq(V), doFit, folds = folds, data = rdf)) #CV train/predict
+  
+  predictions[unlist(folds)] <- predictions #Re-order pred values
+  
+  # Get CV AUC and confidence interval
+  res <- cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
+  ci.res <- ci.cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
+  
+  # retrieve ROC plotting data for all folds
+  flist = list()
+  for(i in seq(V)){
+    a = as_tibble(res$perf@x.values[[i]]) %>% 
+      rename(fpr = value) %>% 
+      mutate(tpr = res$perf@y.values[[i]],
+             fold = as.character(i),
+             auc = res$fold.AUC[i],
+             cvauc_se = NA,
+             cvauc_ci_low = NA,
+             cvauc_ci_high = NA,
+             sens95 = NA,
+             sens95_ci_low = NA,
+             sens95_ci_high = NA)
+    
+    flist[[i]] = a
+  }
+  
+  # now get an overall ROC curve and measure sens and spec
+  overall_pred = prediction(predictions, rdf$outcome)
+  overall_perf = performance(overall_pred, "tpr", "fpr")
+  overall_auc = performance(overall_pred, "auc")
+  overall_sens_spec = performance(overall_pred, "sens", "spec")
+  
+  library(pROC)
+  ci.out <- ci.cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
+  sensci = ci.se(rdf$outcome, predictions, specificities = (0.95))
+  
+  # find sens at 90, 95, 98$ spec
+  
+  b = as_tibble(overall_perf@x.values[[1]]) %>% 
+      rename(fpr = value) %>% 
+      mutate(tpr = overall_perf@y.values[[1]],
+             fold = "all",
+             spec = overall_sens_spec@x.values[[1]],
+             sens = overall_sens_spec@y.values[[1]],
+             auc = ci.out$cvAUC,
+             cvauc_se = ci.out$se,
+             cvauc_ci_low = ci.out$ci[1],
+             cvauc_ci_high = ci.out$ci[2],
+             sens95 = sensci[2],
+             sens95_ci_low = sensci[1],
+             sens95_ci_high = sensci[3])
+  
+  allresults = bind_rows(flist) %>% 
+    bind_rows(b)
+}
+  
+```
+
+
+```{r}
+aa = xval_rf_fxn(df)
 ```
 
