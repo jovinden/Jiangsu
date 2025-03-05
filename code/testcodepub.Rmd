@@ -253,6 +253,104 @@ cvFolds = function(Y, V){ #Y = outcome, #V = number of folds
 }
 ```
 
+## doFit_cutoff
+```{r}
+doFit_cutoff <- function(v, folds, data){ 
+  
+  cutoff_df = data[-folds[[v]],]
+  
+  pred = prediction(as.numeric(cutoff_df$MFI), as.factor(cutoff_df$outcome))
+  
+  return(pred[,2])
+}
+```
+
+
+
+
+## xval_cutoff_fxn
+```{r}
+
+xval_cutoff_fxn = function(fdf, V=5, out = 180){
+  # fdf = function data frame. Requires barcode, ag, MFI, tsi. 
+  # V = # of folds for x-validation
+  # out = cutoff for the outcome variable in days (predicting exposure in the past x days, x = out) 
+  
+  # generate a df that is properly formatted for feeding to rf 
+  rdf = fdf %>% 
+    # generate binary outcome variable - was individual exposed in previous (out) days?
+    mutate(outcome = ifelse(tsi<=out, TRUE, FALSE)) %>% 
+    select(barcode, ag, MFI, outcome) %>% distinct() %>% # select predictor and outcome variables
+    filter(!is.na(outcome)) %>% 
+    pivot_wider(names_from = ag, values_from = MFI) %>% # format so each ag is a separate predictor var
+    select(-barcode) # I only remove barcode at the very last step so that i can check ordering easily
+  
+  # use cvFolds to generate folds
+  folds = cvFolds(Y = rdf$outcome, V = V) # create V folds
+  
+  # run dofit on all the folds
+  predictions <- unlist(sapply(seq(V), doFit_cutoff, folds = folds, data = rdf)) #CV train/predict
+  
+  predictions[unlist(folds)] <- predictions #Re-order pred values
+  
+  # Get CV AUC and confidence interval
+  res <- cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
+  ci.res <- ci.cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
+  
+  # retrieve ROC plotting data for all folds
+  flist = list()
+  for(i in seq(V)){
+    a = as_tibble(res$perf@x.values[[i]]) %>% 
+      rename(fpr = value) %>% 
+      mutate(tpr = res$perf@y.values[[i]],
+             fold = as.character(i),
+             auc = res$fold.AUC[i],
+             cvauc_se = NA,
+             cvauc_ci_low = NA,
+             cvauc_ci_high = NA,
+             sens95 = NA,
+             sens95_ci_low = NA,
+             sens95_ci_high = NA)
+    
+    flist[[i]] = a
+  }
+  
+  # now get an overall ROC curve and measure sens and spec
+  overall_pred = prediction(predictions, rdf$outcome)
+  overall_perf = performance(overall_pred, "tpr", "fpr")
+  overall_auc = performance(overall_pred, "auc")
+  overall_sens_spec = performance(overall_pred, "sens", "spec")
+  
+  library(pROC)
+  ci.out <- ci.cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
+  sensci = ci.se(rdf$outcome, predictions, specificities = (0.95))
+  
+  # find sens at 90, 95, 98$ spec
+  
+  b = as_tibble(overall_perf@x.values[[1]]) %>% 
+      rename(fpr = value) %>% 
+      mutate(tpr = overall_perf@y.values[[1]],
+             fold = "all",
+             spec = overall_sens_spec@x.values[[1]],
+             sens = overall_sens_spec@y.values[[1]],
+             auc = ci.out$cvAUC,
+             cvauc_se = ci.out$se,
+             cvauc_ci_low = ci.out$ci[1],
+             cvauc_ci_high = ci.out$ci[2],
+             sens95 = sensci[2],
+             sens95_ci_low = sensci[1],
+             sens95_ci_high = sensci[3])
+  
+  allresults = bind_rows(flist) %>% 
+    bind_rows(b)
+}
+  
+```
+
+
+```{r}
+aa = xval_cutoff_fxn(df)
+```
 ## doFit
 ```{r}
 # Train random forest model to V-1 folds, predict on remaining fold. 
@@ -264,6 +362,7 @@ doFit <- function(v, folds, data){
   return(pred[,2])
 }
 ```
+
 
 ## xval_rf_fxn
 ```{r}
@@ -345,7 +444,4 @@ xval_rf_fxn = function(fdf, V=5, out = 180){
 ```
 
 
-```{r}
-aa = xval_rf_fxn(df)
-```
 
