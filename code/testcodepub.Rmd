@@ -11,6 +11,8 @@ library(ggbeeswarm)
 library(randomForest)
 library(cvAUC)
 library(ROCR)
+library(pROC)
+library(kableExtra)
 
 set.seed(316)
 
@@ -104,7 +106,7 @@ summary(ta$days_abroad)
 summary(df_noneg %>% select(id, tsi) %>% distinct())
 
 # country
-summary(co %>% select(id, country_cat) %>% distinct())
+summary(df %>% select(id, country_cat) %>% distinct())
 
 ```
 
@@ -239,7 +241,7 @@ ggplot(data=meanMFI)+
 ```
 # Figure 3 ROC single ag cutoffs
 
-First, set up some functions for running cross-validated random forests. 
+First set up some functions for cross validation
 
 ## cvFolds
 ```{r}
@@ -253,84 +255,47 @@ cvFolds = function(Y, V){ #Y = outcome, #V = number of folds
 }
 ```
 
-## doFit_cutoff
-```{r}
-doFit_cutoff <- function(v, folds, data){ 
-  
-  cutoff_df = data[-folds[[v]],]
-  
-  pred = prediction(as.numeric(cutoff_df$MFI), as.factor(cutoff_df$outcome))
-  
-  return(pred[,2])
-}
-```
 
-
-
-
-## xval_cutoff_fxn
+## single_ag_cutoff function
 ```{r}
 
-xval_cutoff_fxn = function(fdf, V=5, out = 180){
+single_ag_cutoff = function(agpick, fdf, V=5, out = 180){
   # fdf = function data frame. Requires barcode, ag, MFI, tsi. 
   # V = # of folds for x-validation
   # out = cutoff for the outcome variable in days (predicting exposure in the past x days, x = out) 
+  # returns a dataframe that can be used to plot ROC curve, has cvAUC cis and sens95 cis 
   
-  # generate a df that is properly formatted for feeding to rf 
-  rdf = fdf %>% 
+  # format the dataframe  
+  cdf = fdf %>% 
     # generate binary outcome variable - was individual exposed in previous (out) days?
     mutate(outcome = ifelse(tsi<=out, TRUE, FALSE)) %>% 
+    filter(ag == agpick) %>% 
     select(barcode, ag, MFI, outcome) %>% distinct() %>% # select predictor and outcome variables
-    filter(!is.na(outcome)) %>% 
-    pivot_wider(names_from = ag, values_from = MFI) %>% # format so each ag is a separate predictor var
-    select(-barcode) # I only remove barcode at the very last step so that i can check ordering easily
+    filter(!is.na(outcome)) 
   
   # use cvFolds to generate folds
-  folds = cvFolds(Y = rdf$outcome, V = V) # create V folds
+  folds = cvFolds(Y = cdf$outcome, V = V) # create V folds
   
-  # run dofit on all the folds
-  predictions <- unlist(sapply(seq(V), doFit_cutoff, folds = folds, data = rdf)) #CV train/predict
+  # use MFI values as cutoffs 
+  pred = prediction(as.numeric(cdf$MFI), as.factor(cdf$outcome))
   
-  predictions[unlist(folds)] <- predictions #Re-order pred values
+  predictions = data_frame(pp = pred@predictions[[1]])
   
-  # Get CV AUC and confidence interval
-  res <- cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
-  ci.res <- ci.cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
-  
-  # retrieve ROC plotting data for all folds
-  flist = list()
-  for(i in seq(V)){
-    a = as_tibble(res$perf@x.values[[i]]) %>% 
-      rename(fpr = value) %>% 
-      mutate(tpr = res$perf@y.values[[i]],
-             fold = as.character(i),
-             auc = res$fold.AUC[i],
-             cvauc_se = NA,
-             cvauc_ci_low = NA,
-             cvauc_ci_high = NA,
-             sens95 = NA,
-             sens95_ci_low = NA,
-             sens95_ci_high = NA)
-    
-    flist[[i]] = a
-  }
-  
-  # now get an overall ROC curve and measure sens and spec
-  overall_pred = prediction(predictions, rdf$outcome)
+  # get an overall ROC curve and measure sens and spec
+  overall_pred = prediction(predictions, cdf$outcome)
   overall_perf = performance(overall_pred, "tpr", "fpr")
   overall_auc = performance(overall_pred, "auc")
   overall_sens_spec = performance(overall_pred, "sens", "spec")
   
-  library(pROC)
-  ci.out <- ci.cvAUC(predictions = predictions, labels = rdf$outcome, folds = folds) 
-  sensci = ci.se(rdf$outcome, predictions, specificities = (0.95))
+  # calculate cvAUC and confidence intervals 
+  ci.out <- ci.cvAUC(predictions = predictions$pp, labels = cdf$outcome, folds = folds) 
+  # find sens at 95% spec
+  sensci = ci.se(cdf$outcome, predictions$pp, specificities = (0.95))
   
-  # find sens at 90, 95, 98$ spec
-  
-  b = as_tibble(overall_perf@x.values[[1]]) %>% 
+  # generate results dataframe to return
+  results = as_tibble(overall_perf@x.values[[1]]) %>% 
       rename(fpr = value) %>% 
       mutate(tpr = overall_perf@y.values[[1]],
-             fold = "all",
              spec = overall_sens_spec@x.values[[1]],
              sens = overall_sens_spec@y.values[[1]],
              auc = ci.out$cvAUC,
@@ -341,16 +306,51 @@ xval_cutoff_fxn = function(fdf, V=5, out = 180){
              sens95_ci_low = sensci[1],
              sens95_ci_high = sensci[3])
   
-  allresults = bind_rows(flist) %>% 
-    bind_rows(b)
+  return(results)
+
 }
   
 ```
 
-
+## single ag ROC curves
 ```{r}
-aa = xval_cutoff_fxn(df)
+singleag_rocs = df %>% 
+  select(ag) %>% distinct() %>% 
+  mutate(roc = map(ag, single_ag_cutoff, fdf=df)) %>% 
+  unnest(cols = c(roc))
+
+# for plotting, pick out the top 5 ags with highest auc
+top_ags = singleag_rocs %>% select(ag, auc) %>% distinct() %>% 
+  mutate(rnk = rank(desc(auc)),
+         colcat = ifelse(rnk<6, ag, "Other"),
+         colcat = factor(colcat, levels = c("GLURP", "ETRAMP5", "EBA140", "CSP", "Rh2", "Other"))) %>% 
+  right_join(singleag_rocs)
+
+# plot ROC curves for each antigen
+ggplot()+
+  geom_line(data=top_ags %>% filter(colcat=="Other"), aes(x=fpr, y=tpr, group=ag), col="grey", alpha=0.5)+
+  geom_line(data=top_ags %>% filter(colcat!="Other"), aes(x=fpr, y=tpr, group=ag, col=colcat))+ 
+  theme_bw()+
+  labs(col = "Antigen")
+  
 ```
+
+## single ag auc and sens95 table
+```{r}
+# generate a table of auc values
+auctab = top_ags %>% 
+  select(ag, auc,cvauc_ci_low, cvauc_ci_high, sens95, sens95_ci_low, sens95_ci_high) %>% 
+  distinct() %>% 
+  arrange(desc(auc))
+
+auctab %>% 
+  kable() %>% kable_classic(full_width = F)
+```
+
+# Figure 4: Combinations
+
+Set up some functions
+
 ## doFit
 ```{r}
 # Train random forest model to V-1 folds, predict on remaining fold. 
@@ -367,7 +367,7 @@ doFit <- function(v, folds, data){
 ## xval_rf_fxn
 ```{r}
 
-xval_rf_fxn = function(fdf, V=5, out = 180){
+xval_rf_fxn = function(fdf, V=5, out = 180, datalabel=""){
   # fdf = function data frame. Requires barcode, ag, MFI, tsi. 
   # V = # of folds for x-validation
   # out = cutoff for the outcome variable in days (predicting exposure in the past x days, x = out) 
@@ -406,7 +406,8 @@ xval_rf_fxn = function(fdf, V=5, out = 180){
              cvauc_ci_high = NA,
              sens95 = NA,
              sens95_ci_low = NA,
-             sens95_ci_high = NA)
+             sens95_ci_high = NA,
+             datalabel = datalabel)
     
     flist[[i]] = a
   }
@@ -435,7 +436,8 @@ xval_rf_fxn = function(fdf, V=5, out = 180){
              cvauc_ci_high = ci.out$ci[2],
              sens95 = sensci[2],
              sens95_ci_low = sensci[1],
-             sens95_ci_high = sensci[3])
+             sens95_ci_high = sensci[3],
+             datalabel = datalabel)
   
   allresults = bind_rows(flist) %>% 
     bind_rows(b)
@@ -443,5 +445,211 @@ xval_rf_fxn = function(fdf, V=5, out = 180){
   
 ```
 
+## combo function
+```{r}
+combo_fxn = function(fdf, nag){
+  ag_name_vect = levels(factor(fdf$ag)) 
+  
+  ab_combo <- as_tibble(
+    t(combn(ag_name_vect, nag)), 
+    stringsAsFactors = F) %>% 
+    rename_with(~ paste0("ag", substr(., 2,2))) %>% 
+    mutate(nag = nag,
+           comboid = row_number()) %>% 
+    mutate(ag2 = ifelse(nag>=2, ag2, "blank"),
+           ag3 = ifelse(nag>=3, ag3, "blank"),
+           ag4 = ifelse(nag>=4, ag4, "blank"),
+           ag5 = ifelse(nag>=5, ag5, "blank"))
+  
+  combo_rf_list = list()
+  
+  #for (i in 1:10){ #1:nrow(ab_combo_all)
+    
+  for (i in 1:nrow(ab_combo)){ #1:nrow(ab_combo_all)
+    
+    cdf = df %>% filter(ag %in% c(ab_combo$ag1[i],
+                                  ab_combo$ag2[i],
+                                  ab_combo$ag3[i],
+                                  ab_combo$ag4[i],
+                                  ab_combo$ag5[i]))
+    c_rf = xval_rf_fxn(cdf) %>% 
+      mutate(nag = ab_combo$nag[i],
+             comboid = ab_combo$comboid[i],
+             ag1 = ab_combo$ag1[i],
+             ag2 = ab_combo$ag2[i],
+             ag3 = ab_combo$ag3[i],
+             ag4 = ab_combo$ag4[i],
+             ag5 = ab_combo$ag5[i])
+    
+    combo_rf_list[[i]] = c_rf
+    
+
+  
+  
+  }
 
 
+  combo_results = bind_rows(combo_rf_list) 
+
+  combo_results_neat = combo_results %>% 
+    filter(fold=="all") %>% 
+    select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
+           sens95, sens95_ci_low, sens95_ci_high, 
+           ag1, ag2, ag3, ag4, ag5) %>% distinct() 
+  
+  return(combo_results)
+
+}
+```
+
+```{r}
+combos1ag = combo_fxn(df, 1) %>% 
+  filter(fold=="all") %>% 
+  select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
+         sens95, sens95_ci_low, sens95_ci_high, 
+         ag1, ag2, ag3, ag4, ag5) %>% 
+  distinct() 
+
+combos2ag = combo_fxn(df, 2) %>% 
+  filter(fold=="all") %>% 
+  select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
+         sens95, sens95_ci_low, sens95_ci_high, 
+         ag1, ag2, ag3, ag4, ag5) %>% 
+  distinct() 
+
+combos3ag = combo_fxn(df, 3) %>% 
+  filter(fold=="all") %>% 
+  select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
+         sens95, sens95_ci_low, sens95_ci_high, 
+         ag1, ag2, ag3, ag4, ag5) %>% 
+  distinct() 
+  
+combos4ag = combo_fxn(df, 4) %>% 
+  filter(fold=="all") %>% 
+  select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
+         sens95, sens95_ci_low, sens95_ci_high, 
+         ag1, ag2, ag3, ag4, ag5) %>% 
+  distinct() 
+
+combos5ag = combo_fxn(df, 5) %>% 
+  filter(fold=="all") %>% 
+  select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
+         sens95, sens95_ci_low, sens95_ci_high, 
+         ag1, ag2, ag3, ag4, ag5) %>% 
+  distinct() 
+```
+
+
+## 
+```{r}
+# create different combinations 
+ag_name_vect = levels(factor(df$ag)) 
+
+ab_combo_n1 <- as_tibble(
+  t(combn(ag_name_vect, 1)), 
+  stringsAsFactors = F, 
+  .name_repair = "unique") %>% 
+  mutate(ag1 = `...1`,
+         ag2 = 'blank',
+         ag3 = 'blank',
+         ag4 = 'blank',
+         ag5 = 'blank',
+         nag = 1,
+         comboid = row_number()) %>% 
+  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
+
+ab_combo_n2 <- as_tibble(
+  t(combn(ag_name_vect, 2)), 
+  stringsAsFactors = F, 
+  .name_repair = "unique") %>% 
+  mutate(ag1 = `...1`,
+         ag2 = `...2`,
+         ag3 = 'blank',
+         ag4 = 'blank',
+         ag5 = 'blank',
+         nag = 2,
+         comboid = row_number()) %>% 
+  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
+
+ab_combo_n3 <- as_tibble(
+  t(combn(ag_name_vect, 3)), 
+  stringsAsFactors = F, 
+  .name_repair = "unique") %>% 
+  mutate(ag1 = `...1`,
+         ag2 = `...2`,
+         ag3 = `...3`,
+         ag4 = 'blank',
+         ag5 = 'blank',
+         nag = 3,
+         comboid = row_number()) %>% 
+  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
+
+ab_combo_n4 <- as_tibble(
+  t(combn(ag_name_vect, 4)), 
+  stringsAsFactors = F, 
+  .name_repair = "unique") %>% 
+  mutate(ag1 = `...1`,
+         ag2 = `...2`,
+         ag3 = `...3`,
+         ag4 = `...4`,
+         ag5 = 'blank',
+         nag = 4,
+         comboid = row_number()) %>% 
+  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
+
+ab_combo_n5 <- as_tibble(
+  t(combn(ag_name_vect, 5)), 
+  stringsAsFactors = F, 
+  .name_repair = "unique") %>% 
+  mutate(ag1 = `...1`,
+         ag2 = `...2`,
+         ag3 = `...3`,
+         ag4 = `...4`,
+         ag5 = `...5`,
+         nag = 5,
+         comboid = row_number()) %>% 
+  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
+
+ab_combo_all = rbind(ab_combo_n1,
+                     ab_combo_n2,
+                     ab_combo_n3,
+                     ab_combo_n4,
+                     ab_combo_n5)
+
+# run rf on each combination
+combo_rf_list = list()
+
+for (i in 1:10){ #1:nrow(ab_combo_all)
+
+#for (i in 1:nrow(ab_combo_all)){ #1:nrow(ab_combo_all)
+  
+  cdf = df %>% filter(ag %in% c(ab_combo_all$ag1[i],
+                                   ab_combo_all$ag2[i],
+                                   ab_combo_all$ag3[i],
+                                   ab_combo_all$ag4[i],
+                                   ab_combo_all$ag5[i]))
+  
+  c_rf = xval_rf_fxn(cdf) %>% 
+    mutate(nag = ab_combo_all$nag[i],
+           comboid = ab_combo_all$comboid[i],
+           ag1 = ab_combo_all$ag1[i],
+           ag2 = ab_combo_all$ag2[i],
+           ag3 = ab_combo_all$ag3[i],
+           ag4 = ab_combo_all$ag4[i],
+           ag5 = ab_combo_all$ag5[i])
+  
+  combo_rf_list[[i]] = c_rf
+}
+
+all_combo_results = bind_rows(combo_rf_list) 
+
+all_combo_results_neat = all_combo_results %>% 
+  select(nag, comboid, auc,sens95) %>% distinct() %>% 
+  left_join(ab_combo_all)
+
+
+
+write_rds(all_combo_results, 
+          paste0("~/Library/CloudStorage/Box-Box/SerologyR01/Jiangsu/Jo paper/combos/combo_dfs/allcombos_", 
+                 substr(gsub("\\D", "", Sys.time()), 1,14), ".rds"))
+```
