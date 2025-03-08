@@ -447,26 +447,42 @@ xval_rf_fxn = function(fdf, V=5, out = 180, datalabel=""){
 
 ## combo function
 ```{r}
+# combo_fxn runs V-fold cross validated randomForest on all combinations of a specified number   #(nag) of antigens. Returns a dataframe with tpr, fpr, auc for each fold, as well as cvauc,   #cvauc ci, sens95 and sens95 ci
+# arguments: fdf = "function dataframe" - the dataframe the function will use. 
+                    # Requires variables = barcode, ag, MFI, tsi. 
+            # nag = "number of antigens" = number of antigens included in combinations. Will                      only work for nag <=5. 
+# note that combo_fxn takes about 1 second to run per combination. 
+
 combo_fxn = function(fdf, nag){
+  # generate vector of ag names to make combinations with
   ag_name_vect = levels(factor(fdf$ag)) 
   
+  # generate all possible combinations of nag antigens
   ab_combo <- as_tibble(
     t(combn(ag_name_vect, nag)), 
     stringsAsFactors = F) %>% 
-    rename_with(~ paste0("ag", substr(., 2,2))) %>% 
+    rename_with(~ paste0("ag", substr(., 2,2))) %>% #rename for clarity
     mutate(nag = nag,
            comboid = row_number()) %>% 
-    mutate(ag2 = ifelse(nag>=2, ag2, "blank"),
+    # in order to make outputs easily combinable (rbind), ensure the same 
+    # columns are present regardless of nag (this is why nag must be <=5)
+    mutate(ag2 = ifelse(nag>=2, ag2, "blank"), 
            ag3 = ifelse(nag>=3, ag3, "blank"),
            ag4 = ifelse(nag>=4, ag4, "blank"),
            ag5 = ifelse(nag>=5, ag5, "blank"))
   
+  # use a for loop to run xval_rf_fxn on all combinations
   combo_rf_list = list()
-  
-  #for (i in 1:10){ #1:nrow(ab_combo_all)
+
     
-  for (i in 1:nrow(ab_combo)){ #1:nrow(ab_combo_all)
+  for (i in 1:nrow(ab_combo)){ 
     
+    # to keep track of progress, print how har along in the combos you are
+    print(paste0("nag", nag, " ", 
+                 "combo", i, "of", nrow(ab_combo), " ", round(i/nrow(ab_combo), 2)))
+    
+    # create a dataframe that only contains antigens specified in the current 
+    # combination iteration
     cdf = df %>% filter(ag %in% c(ab_combo$ag1[i],
                                   ab_combo$ag2[i],
                                   ab_combo$ag3[i],
@@ -482,27 +498,29 @@ combo_fxn = function(fdf, nag){
              ag5 = ab_combo$ag5[i])
     
     combo_rf_list[[i]] = c_rf
-    
-
-  
   
   }
 
 
   combo_results = bind_rows(combo_rf_list) 
-
-  combo_results_neat = combo_results %>% 
-    filter(fold=="all") %>% 
-    select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
-           sens95, sens95_ci_low, sens95_ci_high, 
-           ag1, ag2, ag3, ag4, ag5) %>% distinct() 
   
   return(combo_results)
 
 }
 ```
 
-```{r}
+
+## generate combination results
+
+Note: The code I used to generate the results for all possible combinations of up to 5 antigens is in the chunk below. Option 1 is to run this code yourself, which will take several hours because there are 21699 combinations to evaluate. Alternatively, you can skip ahead to Option 2 and download the results that I generated and uploaded to github. 
+
+
+### option 1: generate from scratch (6+ hours on a macbook pro)
+```{r eval=FALSE}
+# run combo_fxn to get x-validated rf results for all possible combinations of up to 5 ags. 
+# note that this will take several hours to run on a personal computer. 
+# alternatively, you can skip this chunk, and download the data I generated in the next chunk
+
 combos1ag = combo_fxn(df, 1) %>% 
   filter(fold=="all") %>% 
   select(nag, comboid, auc, cvauc_se, cvauc_ci_low, cvauc_ci_high, 
@@ -537,119 +555,22 @@ combos5ag = combo_fxn(df, 5) %>%
          sens95, sens95_ci_low, sens95_ci_high, 
          ag1, ag2, ag3, ag4, ag5) %>% 
   distinct() 
+
+
+allcombos = rbind(combos1ag, combos2ag, combos3ag, combos4ag, combos5ag)
+
+#write_csv(allcombos, 
+#          paste0("~/Downloads/allcombos", substr(gsub("\\D", "", Sys.time()), 1,14),".csv"))
 ```
 
+### option 2: download combination results (faster)
+```{r}
 
+allcombos = read_csv("https://raw.githubusercontent.com/jovinden/Jiangsu/refs/heads/main/data/combo_results_jiangsu_vinden.csv")
+
+```
 ## 
 ```{r}
-# create different combinations 
-ag_name_vect = levels(factor(df$ag)) 
 
-ab_combo_n1 <- as_tibble(
-  t(combn(ag_name_vect, 1)), 
-  stringsAsFactors = F, 
-  .name_repair = "unique") %>% 
-  mutate(ag1 = `...1`,
-         ag2 = 'blank',
-         ag3 = 'blank',
-         ag4 = 'blank',
-         ag5 = 'blank',
-         nag = 1,
-         comboid = row_number()) %>% 
-  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
-
-ab_combo_n2 <- as_tibble(
-  t(combn(ag_name_vect, 2)), 
-  stringsAsFactors = F, 
-  .name_repair = "unique") %>% 
-  mutate(ag1 = `...1`,
-         ag2 = `...2`,
-         ag3 = 'blank',
-         ag4 = 'blank',
-         ag5 = 'blank',
-         nag = 2,
-         comboid = row_number()) %>% 
-  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
-
-ab_combo_n3 <- as_tibble(
-  t(combn(ag_name_vect, 3)), 
-  stringsAsFactors = F, 
-  .name_repair = "unique") %>% 
-  mutate(ag1 = `...1`,
-         ag2 = `...2`,
-         ag3 = `...3`,
-         ag4 = 'blank',
-         ag5 = 'blank',
-         nag = 3,
-         comboid = row_number()) %>% 
-  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
-
-ab_combo_n4 <- as_tibble(
-  t(combn(ag_name_vect, 4)), 
-  stringsAsFactors = F, 
-  .name_repair = "unique") %>% 
-  mutate(ag1 = `...1`,
-         ag2 = `...2`,
-         ag3 = `...3`,
-         ag4 = `...4`,
-         ag5 = 'blank',
-         nag = 4,
-         comboid = row_number()) %>% 
-  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
-
-ab_combo_n5 <- as_tibble(
-  t(combn(ag_name_vect, 5)), 
-  stringsAsFactors = F, 
-  .name_repair = "unique") %>% 
-  mutate(ag1 = `...1`,
-         ag2 = `...2`,
-         ag3 = `...3`,
-         ag4 = `...4`,
-         ag5 = `...5`,
-         nag = 5,
-         comboid = row_number()) %>% 
-  select(nag, comboid, ag1, ag2, ag3, ag4, ag5)
-
-ab_combo_all = rbind(ab_combo_n1,
-                     ab_combo_n2,
-                     ab_combo_n3,
-                     ab_combo_n4,
-                     ab_combo_n5)
-
-# run rf on each combination
-combo_rf_list = list()
-
-for (i in 1:10){ #1:nrow(ab_combo_all)
-
-#for (i in 1:nrow(ab_combo_all)){ #1:nrow(ab_combo_all)
-  
-  cdf = df %>% filter(ag %in% c(ab_combo_all$ag1[i],
-                                   ab_combo_all$ag2[i],
-                                   ab_combo_all$ag3[i],
-                                   ab_combo_all$ag4[i],
-                                   ab_combo_all$ag5[i]))
-  
-  c_rf = xval_rf_fxn(cdf) %>% 
-    mutate(nag = ab_combo_all$nag[i],
-           comboid = ab_combo_all$comboid[i],
-           ag1 = ab_combo_all$ag1[i],
-           ag2 = ab_combo_all$ag2[i],
-           ag3 = ab_combo_all$ag3[i],
-           ag4 = ab_combo_all$ag4[i],
-           ag5 = ab_combo_all$ag5[i])
-  
-  combo_rf_list[[i]] = c_rf
-}
-
-all_combo_results = bind_rows(combo_rf_list) 
-
-all_combo_results_neat = all_combo_results %>% 
-  select(nag, comboid, auc,sens95) %>% distinct() %>% 
-  left_join(ab_combo_all)
-
-
-
-write_rds(all_combo_results, 
-          paste0("~/Library/CloudStorage/Box-Box/SerologyR01/Jiangsu/Jo paper/combos/combo_dfs/allcombos_", 
-                 substr(gsub("\\D", "", Sys.time()), 1,14), ".rds"))
 ```
+
